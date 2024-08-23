@@ -1,0 +1,16 @@
+---
+title: "ACS"
+author: "Youyu Zhou"
+date: "2024-08-23"
+output: html_document
+---
+
+
+```{r}
+# Load data
+library(survival)
+data("cancer")
+View(rats2)
+
+```
+
