@@ -14,13 +14,13 @@ data("cancer")
 mydata = rats2 %>% rename("start" = "time1", "stop" = "time2", "enum" = "obs")
 ```
 
-<!-- Data description -->
-id is the unique individual identifier.
-start is the time when the risk interval begins.
-stop is the time when the risk interval ends.
-status is whether an emergency department visit occurs (1=yes, 0=no).
-enum is the indicator for which event number an individual is at risk for.
-trt indicates whether the individual received active or control intervention (1=active, 0=control).
+# Data description
+* id is the unique individual identifier.
+* start is the time when the risk interval begins.
+* stop is the time when the risk interval ends.
+* status is whether an emergency department visit occurs (1=yes, 0=no).
+* enum is the indicator for which event number an individual is at risk for.
+* trt indicates whether the individual received active or control intervention (1=active, 0=control).
 
 ```{r}
 mydata %>% filter(stop == start)
@@ -30,7 +30,6 @@ There are 22 records where time interval is zero (start = stop), and we remove t
 
 ```{r}
 mydata = mydata %>% filter(stop != start)
-
 ```
 
 # Standard Cox Model
@@ -72,7 +71,11 @@ This PWP Calendar-Time model indicates that active treatment is significantly as
 
 This means that the treatment group experiences 63.2% of the hazard rate compared to the control group. In other words, the treatment reduces the hazard of experiencing a recurrent event by approximately 36.8% (1 - 0.632).
 
-The point estimate for the PWP Calendar-Time model (0.63) differs from the point estimate from the Andersen-Gill model (0.53) because the Andersen-Gill model assumes a common baseline hazard for all events, while the PWP Calendar-Time model assumes an event-specific baseline hazard for each event. A single point estimate is output by the PWP Calendar-Time model because the code used has calculated a weighted average across all events.
+The point estimate for the PWP Calendar-Time model (0.63) differs from the point estimate from the Andersen-Gill model (0.53) because the Andersen-Gill model assumes a common baseline hazard for all events, while the PWP Calendar-Time model assumes an event-specific baseline hazard for each event. 
+
+Strata are used to separate different event orders. The PWP model accounts for the fact that the underlying hazard for the second event may differ from that of the first event, ensuring that the analysis is event-specific. Stratifying by event order helps ensure that each event (e.g., the first event, the second event, etc.) has its own baseline hazard function.
+
+A single point estimate is output by the PWP Calendar-Time model because the code used has calculated a weighted average across all events.
 
 To calculate the HR for each event we use the following code where we have included an interaction between strata and treatment covariates:
 # Interaction
@@ -126,3 +129,33 @@ pwpgt_model2
 Again, we see that the HR for the first event of the PWP Gap Time (0.50) is identical to both the PWP Calendar Time (0.50) and standard Cox model (0.50). 
 
 In this particular example, the findings of the PWP Gap Time and PWP Calendar Time models follow a similar pattern (i.e., no significant association between 3rd-5th events and marginally significant for 2nd events). 
+
+# Frailty Models
+The final model with application for recurrent events are the frailty models which are models that incorporate a random effect for each individual. In this example we are using the calendar time (though gap time can also be used). We are using the default distribution of the random effect, which in this case is the gamma distribution.
+
+# Unstratified Frailty Model
+The unstratified frailty model is similar to the Andersen-Gill model in that it assumes a common baseline hazard function, but in this case, rather than incorporating a robust variance estimator, we incorporate a random effects term given by the frailty() term.
+
+```{r}
+unstrat_frailty <- summary(coxph(
+  Surv(start, stop, status) ~ trt + frailty(id),
+  data = mydata))
+unstrat_frailty
+```
+In this relatively simple dataset, there are no issues with model convergence. We find that this model indicates that active treatment is significantly associated with a reduced HR of 0.50 95%CI (0.33-0.76) for recurrent emergency department visits. 
+
+Note the close similarity in the point estimates between this model (HR: 0.50) and the Andersen Gill model (HR: 0.53). 
+
+The difference in these models can be attributed to the differences in how dependence between events is modeled. The frailty model uses individual-level random effects, while the Andersen-Gill model uses a robust variance estimator.
+
+# Stratified Frailty Model
+Similar to the event-specific PWP models, we use the data structure that aggregates 6+ events into a single category, and examining the HR’s for each event we find the following:
+```{r}
+strat_frailty <- summary(coxph(
+  Surv(start, stop, status) ~ trt + strata(enum) + frailty(id) ,
+  data = mydata2
+))
+strat_frailty
+```
+In this case, we find that the results for the HR of the first event in the frailty model (HR: 0.47 95%CI [0.26-0.87]) differ from the standard Cox model (HR:0.50 95%CI [0.27-0.91]). Again, this is likely due to the use of the individual-level random effects term.
+
