@@ -9,8 +9,120 @@ output: html_document
 ```{r}
 # Load data
 library(survival)
+library(dplyr)
 data("cancer")
-View(rats2)
+mydata = rats2 %>% rename("start" = "time1", "stop" = "time2", "enum" = "obs")
+```
+
+<!-- Data description -->
+id is the unique individual identifier.
+start is the time when the risk interval begins.
+stop is the time when the risk interval ends.
+status is whether an emergency department visit occurs (1=yes, 0=no).
+enum is the indicator for which event number an individual is at risk for.
+trt indicates whether the individual received active or control intervention (1=active, 0=control).
+
+```{r}
+mydata %>% filter(stop == start)
+```
+
+There are 22 records where time interval is zero (start = stop), and we remove those records so that there is a non-zero interval for each record.
+
+```{r}
+mydata = mydata %>% filter(stop != start)
 
 ```
 
+# Standard Cox Model
+```{r}
+data_1 <- mydata %>% filter(enum == 1)
+cox_model <- summary(coxph(Surv(stop) ~ trt,
+                           data = data_1,
+                           method = 'breslow'))
+cox_model
+```
+The standard Cox model indicates that active (vs control) treatment is significantly associated with the hazard of first emergency department occurrence (hazard ratio (HR) of 0.50 95%CI (0.27-0.91)). 
+
+A hazard ratio less than 1 (0.4994) means that the treatment group has a lower risk of the event occurring compared to the baseline or control group. Specifically, the treatment reduces the hazard of first emergency department visit by approximately 50% (1 - 0.4994).
+
+
+# Anderson Gill Model
+```{r}
+ag_model <- summary(coxph(
+  Surv(start, stop, status) ~ trt + cluster(id),
+  data = mydata,
+  method = "breslow",
+))
+ag_model
+```
+The Andersen-Gill model indicates that active (vs control) treatment is significantly associated with the rate of recurrent emergency department visits (HR of 0.53 95%CI 0.37-0.76). 
+
+In the treatment group, the hazard of a recurrent event is approximately 52.6% of the hazard in the control group. In other words, the treatment is associated with a 47.4% reduction in the hazard of experiencing another event (recurrence).
+
+# Prentice Williams Peterson Calendar Time Model
+```{r}
+pwpct_model <- summary(coxph(
+  Surv(start, stop, status) ~ trt + cluster(id) + strata(enum),
+  method = "breslow",
+  data = mydata
+))
+pwpct_model
+```
+This PWP Calendar-Time model indicates that active treatment is significantly associated with the rate of recurrent emergency department visits (0.63 95%CI 0.49-0.82). 
+
+This means that the treatment group experiences 63.2% of the hazard rate compared to the control group. In other words, the treatment reduces the hazard of experiencing a recurrent event by approximately 36.8% (1 - 0.632).
+
+The point estimate for the PWP Calendar-Time model (0.63) differs from the point estimate from the Andersen-Gill model (0.53) because the Andersen-Gill model assumes a common baseline hazard for all events, while the PWP Calendar-Time model assumes an event-specific baseline hazard for each event. A single point estimate is output by the PWP Calendar-Time model because the code used has calculated a weighted average across all events.
+
+To calculate the HR for each event we use the following code where we have included an interaction between strata and treatment covariates:
+# Interaction
+```{r}
+summary(coxph(
+  Surv(start, stop, status) ~ trt * strata(enum) + cluster(id),
+  method = "breslow",
+  data = mydata
+))
+
+```
+However this code highlights the difficulty of calculating event-specific hazard ratios, which is that at higher event numbers the model does not converge.
+
+Therefore, we must aggregate all events occurring above a certain number (i.e., 6 or more in this example). 
+```{r}
+mydata2 <- mydata %>% mutate (enum_pwp = ifelse(enum>6, 6, enum))
+pwpct_model2 <- summary(coxph(
+  Surv(start, stop, status) ~ trt * strata(enum_pwp) + cluster(id),
+  method = "breslow",
+  data = mydata2
+))
+pwpct_model2
+```
+The first thing to note here is that the HR for the first event of the PWP Calendar-Time model (0.50) is identical to the HR of the Cox model (0.50). This intuitively makes sense, because the Cox model and the PWP models are identical up until the first event.
+
+We also see that for the 3rd to the 6th events, there is no association identified between treatment and hazard of emergency department visits. However, at 2nd and 4th emergency department visits, it appears there may be an association of the treatment with the hazard of emergency department visits (p=0.09 and 0.05).
+
+# PWP Gap-Time Model
+To calculate the PWP Gap-Time model, we use identical code; however, we must calculate the gap time between each events:
+```{r}
+mydata3 <- mydata %>% mutate(gap_time = stop - start)
+pwpgt_model <- summary(coxph(
+  Surv(gap_time, status) ~ trt + strata(enum) + cluster(id),
+  method = 'breslow',
+  data = mydata3
+))
+pwpgt_model
+```
+In this case the weighted average results of the PWP Gap-Time model (HR:0.57 95%CI[0.42-0.77]) differ from the PWP Calendar-Time model (HR: 0.63 95%CI 0.49-0.82), which can be attributed to differences in the risk interval used.
+
+When we calculate the event-specific hazard ratio estimates (i.e., by introducing interaction terms for treatment and strata), and aggregating 6+ events, we find the following:
+```{r}
+mydata3_1 <- mydata2 %>% mutate(gap_time = stop - start)
+pwpgt_model2 <- summary(coxph(
+  Surv(gap_time, status) ~ trt * strata(enum_pwp) + cluster(id),
+  method = "breslow",
+  data = mydata3_1
+))
+pwpgt_model2
+```
+Again, we see that the HR for the first event of the PWP Gap Time (0.50) is identical to both the PWP Calendar Time (0.50) and standard Cox model (0.50). 
+
+In this particular example, the findings of the PWP Gap Time and PWP Calendar Time models follow a similar pattern (i.e., no significant association between 3rd-5th events and marginally significant for 2nd events). 
